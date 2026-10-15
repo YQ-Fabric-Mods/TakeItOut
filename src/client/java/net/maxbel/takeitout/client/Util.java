@@ -12,6 +12,10 @@ import net.minecraft.world.level.block.ShulkerBoxBlock;
 public class Util {
 
     public static int getShulkerWithStack(Inventory playerInventory, ItemStack stackReference) {
+        if (TakeItOutConfigs.IGNORE_INVENTORY_CONTAINERS.getBooleanValue()) {
+            return -1;
+        }
+
         Player player = playerInventory.player;
 
         for (int i = 0; i < getSize(playerInventory); ++i) {

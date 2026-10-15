@@ -11,6 +11,7 @@ TakeItOut is a Fabric utility mod that pulls the block you need out of shulker b
 - Supports Litematica Printer by feeding missing blocks from shulkers while the printer is running.
 - Supports Tweakeroo restock: if Tweakeroo cannot restock a stack from the inventory, TakeItOut can pull it from a shulker.
 - Can extract either a full stack or a single item from the shulker.
+- Offers an "Ignore Inventory Containers When Taking Items" client setting (disabled by default). Enable it in TakeItOut Settings to skip carried container contents and take missing items from linked world containers. This setting is saved in `config/takeitout.json`.
 - Saves client settings between launches in `config/takeitout-client.json`.
 - Skips non-empty stacked shulkers to avoid unsafe extraction from stacked container items.
 - Avoids replacing tools, shulker boxes, and ender chests when it has to move the item currently in your hand.

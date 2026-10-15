@@ -18,8 +18,14 @@ public final class TakeItOutConfigs {
             false
     );
 
-    public static final List<ConfigColor> GENERIC_LIST = List.of(
-            CONTAINER_SOURCE_OUTLINE_COLOR
+    public static final ConfigBoolean IGNORE_INVENTORY_CONTAINERS = new ConfigBoolean(
+            "ignoreInventoryContainers",
+            false
+    );
+
+    public static final List<IConfigBase> GENERIC_LIST = List.of(
+            CONTAINER_SOURCE_OUTLINE_COLOR,
+            IGNORE_INVENTORY_CONTAINERS
     );
 
     public static final List<IConfigBase> SETTINGS_LIST;
@@ -32,6 +38,10 @@ public final class TakeItOutConfigs {
         BOX_SELECT_CREATES_NEW_GROUP.setPrettyName("Box Select Creates New Group");
         BOX_SELECT_CREATES_NEW_GROUP.setTranslatedName("Box Select Creates New Group");
         BOX_SELECT_CREATES_NEW_GROUP.setComment("When enabled, box-selecting a region creates a new group instead of adding to the current one.");
+
+        IGNORE_INVENTORY_CONTAINERS.setPrettyName("takeitout.config.name.ignoreInventoryContainers");
+        IGNORE_INVENTORY_CONTAINERS.setTranslatedName("takeitout.config.name.ignoreInventoryContainers");
+        IGNORE_INVENTORY_CONTAINERS.setComment("Skip carried container contents when taking items and continue searching linked world containers.");
 
         List<IConfigBase> settings = new ArrayList<>();
         settings.addAll(GENERIC_LIST);

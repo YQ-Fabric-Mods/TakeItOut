@@ -1,4 +1,5 @@
 {
+  "takeitout.config.name.ignoreInventoryContainers": "Ignore Inventory Containers When Taking Items",
   "key.takeitout.toggle": "Toggle auto take out",
   "key.takeitout.extract_mode": "Toggle shulker extract mode",
   "key.takeitout.open_settings": "Open TakeItOut settings",
