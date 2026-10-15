@@ -282,7 +282,6 @@ public final class WorldContainerSources {
             JsonObject groups = getOrCreateObject(worldCtx, GROUPS_KEY);
             if (!groups.has(name)) groups.add(name, new JsonObject());
             Files.writeString(SOURCES_PATH, GSON.toJson(root));
-            WorldContainerDumps.createGroup(currentWorldKey, name);
         } catch (IOException e) {
             LOGGER.warn("Failed to create group '{}'", name, e);
         }
@@ -305,7 +304,6 @@ public final class WorldContainerSources {
                 worldCtx.addProperty(ACTIVE_GROUP_KEY, newName);
             }
             Files.writeString(SOURCES_PATH, GSON.toJson(root));
-            WorldContainerDumps.renameGroup(currentWorldKey, oldName, newName);
             return true;
         } catch (IOException e) {
             LOGGER.warn("Failed to rename group '{}' to '{}'", oldName, newName, e);
@@ -323,7 +321,6 @@ public final class WorldContainerSources {
             if (!groups.has(name)) return false;
             groups.remove(name);
             Files.writeString(SOURCES_PATH, GSON.toJson(root));
-            WorldContainerDumps.deleteGroup(currentWorldKey, name);
             return true;
         } catch (IOException e) {
             LOGGER.warn("Failed to delete group '{}'", name, e);
@@ -387,7 +384,6 @@ public final class WorldContainerSources {
             }
             groups.add(name, group);
             Files.writeString(SOURCES_PATH, GSON.toJson(root));
-            WorldContainerDumps.createGroup(currentWorldKey, name);
             LOGGER.info("Imported shared group: world={}, name={}", currentWorldKey, name);
         } catch (IOException e) {
             LOGGER.warn("Failed to import shared group '{}'", groupName, e);
@@ -402,7 +398,6 @@ public final class WorldContainerSources {
         isDirty = false;
         persistActiveGroup();
         loadCurrentContext();
-        WorldContainerDumps.switchGroup(name);
         LOGGER.info("Switched group: world={}, group={}", currentWorldKey, currentGroupName);
     }
 
@@ -503,7 +498,7 @@ public final class WorldContainerSources {
         LOGGER.debug("World container request: required={}, sources={}, singleItemMode={}", required, sources.size(), singleItemMode);
         TakeitoutClient.awaitingStack = required.copyWithCount(1);
         ClientPlayNetworking.send(new Takeitout.GetWorldContainerStackPayload(
-                sources, required.copyWithCount(1), singleItemMode, fromUi, WorldContainerDumps.getDumpReferencesSnapshot()
+                sources, required.copyWithCount(1), singleItemMode, fromUi, List.of()
         ));
         return true;
     }

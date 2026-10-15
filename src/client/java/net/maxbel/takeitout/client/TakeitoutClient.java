@@ -139,7 +139,6 @@ public class TakeitoutClient implements ClientModInitializer {
         ClientTickEvents.END_CLIENT_TICK.register(client -> {
             if (client.level != lastSourceWorld) {
                 WorldContainerSources.updateContext(client);
-                WorldContainerDumps.updateContext(client);
                 lastSourceWorld = client.level;
                 awaitingStack = ItemStack.EMPTY;
                 awaitingStackTicks = 0;
@@ -217,13 +216,7 @@ public class TakeitoutClient implements ClientModInitializer {
             return;
         }
 
-        List<Takeitout.WorldContainerSource> dumps = WorldContainerDumps.getDumpReferencesSnapshot();
-        if (dumps.isEmpty()) {
-            client.player.sendOverlayMessage(Component.literal("TakeItOut: no dump containers marked"));
-            return;
-        }
-
-        ClientPlayNetworking.send(new Takeitout.DumpInventoryPayload(dumps));
+        ClientPlayNetworking.send(new Takeitout.DumpInventoryPayload(List.of()));
     }
 
     public static void setContainerSourceOutlineColor(int color) {

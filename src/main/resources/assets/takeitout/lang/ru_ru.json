@@ -6,8 +6,9 @@
   "message.takeitout.extract_mode.stack": "Режим вытягивания: ВЕСЬ СТАК",
   "message.takeitout.extract_mode.single": "Режим вытягивания: ОДИН ПРЕДМЕТ",
   "key.category.takeitout.takeitout": "TakeItOut",
-  "takeitout.msg.stacked_shulker_skipped":"Действие отменено (Take It Out Mod): найден стак шалкеров",
+  "takeitout.msg.stacked_shulker_skipped": "Действие отменено (Take It Out Mod): найден стак шалкеров",
   "message.takeitout.item_not_found": "Не найдено в контейнерах: %s",
   "tooltip.takeitout.take_stack": "ЛКМ: взять стак",
-  "tooltip.takeitout.take_single": "ПКМ: взять 1 предмет"
+  "tooltip.takeitout.take_single": "ПКМ: взять 1 предмет",
+  "message.takeitout.returned_to_sources": "Возвращено предметов в исходные контейнеры: %s. Остальные остались в инвентаре."
 }

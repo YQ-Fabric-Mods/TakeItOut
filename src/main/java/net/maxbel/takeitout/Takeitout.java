@@ -10,6 +10,7 @@ import net.fabricmc.loader.api.FabricLoader;
 import net.fabricmc.fabric.api.networking.v1.PayloadTypeRegistry;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
+import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.minecraft.network.chat.Component;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.core.NonNullList;
@@ -24,14 +25,13 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.Container;
 import net.minecraft.world.InteractionHand;
-import net.minecraft.tags.ItemTags;
 import net.minecraft.world.item.BlockItem;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.component.ItemContainerContents;
+import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.level.block.BarrelBlock;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.ChestBlock;
-import net.minecraft.world.level.block.EnderChestBlock;
 import net.minecraft.world.level.block.ShulkerBoxBlock;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
@@ -44,6 +44,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
@@ -63,6 +65,11 @@ public class Takeitout implements ModInitializer {
     private static LinkedContainerExchangeMode linkedContainerExchangeMode = LinkedContainerExchangeMode.CROSS_DIMENSION;
     private static int linkedContainerScanLimit = DEFAULT_LINKED_CONTAINER_SCAN_LIMIT;
     private static boolean allowAllItemsTake = true;
+    private static final Map<UUID, ContainerReturnTracker<ReturnSource>> RETURN_TRACKERS = new HashMap<>();
+
+    private sealed interface ReturnSource permits WorldReturnSource, ShulkerReturnSource {}
+    private record WorldReturnSource(WorldContainerSource source) implements ReturnSource {}
+    private record ShulkerReturnSource(String id) implements ReturnSource {}
 
     public record GetShulkerStackPayload(int slot, int shulker, boolean singleItemMode) implements CustomPacketPayload {
         public static final CustomPacketPayload.Type<GetShulkerStackPayload> ID =
@@ -386,9 +393,13 @@ public class Takeitout implements ModInitializer {
         );
 
         ServerPlayConnectionEvents.JOIN.register((handler, sender, server) -> {
+            RETURN_TRACKERS.remove(handler.getPlayer().getUUID());
             sender.sendPacket(new ServerConfigSyncPayload(linkedContainerScanLimit));
             sender.sendPacket(new SharedGroupsListPayload(loadSharedGroups()));
         });
+        ServerPlayConnectionEvents.DISCONNECT.register((handler, server) ->
+                server.execute(() -> RETURN_TRACKERS.remove(handler.getPlayer().getUUID())));
+        ServerLifecycleEvents.SERVER_STOPPED.register(server -> RETURN_TRACKERS.clear());
     }
 
     private static void handlePublishGroupPayload(ServerPlayer player, PublishGroupPayload payload) {
@@ -532,69 +543,11 @@ public class Takeitout implements ModInitializer {
             return;
         }
 
-        ItemStack stackInShulker = itemStacks.get(slotInShulker);
-        if (stackInShulker.isEmpty()) {
-            return;
-        }
-
-        ItemStack extracted = stackInShulker.copy();
-        if (singleItemMode) {
-            extracted.setCount(1);
-        }
-
-        ItemStack remainingInShulker = stackInShulker.copy();
-        remainingInShulker.shrink(extracted.getCount());
-        ItemStack currentMainHand = player.getItemInHand(InteractionHand.MAIN_HAND).copy();
-
-        if (currentMainHand.isEmpty()) {
-            itemStacks.set(slotInShulker, remainingInShulker.isEmpty() ? ItemStack.EMPTY : remainingInShulker);
-            shulker.set(DataComponents.CONTAINER, ItemContainerContents.fromItems(itemStacks));
-
-            player.setItemInHand(InteractionHand.MAIN_HAND, extracted);
-            syncPlayerInventory(player);
-            return;
-        }
-
-        int freeSlot = player.getInventory().getFreeSlot();
-
-        if (freeSlot != -1) {
-            itemStacks.set(slotInShulker, remainingInShulker.isEmpty() ? ItemStack.EMPTY : remainingInShulker);
-            shulker.set(DataComponents.CONTAINER, ItemContainerContents.fromItems(itemStacks));
-
-            player.getInventory().setItem(freeSlot, currentMainHand);
-            player.setItemInHand(InteractionHand.MAIN_HAND, extracted);
-            syncPlayerInventory(player);
-            return;
-        }
-
-        if (!remainingInShulker.isEmpty()) {
-            itemStacks.set(slotInShulker, remainingInShulker);
-            ItemStack leftover = insertIntoShulker(itemStacks, currentMainHand);
-            if (leftover.isEmpty()) {
-                shulker.set(DataComponents.CONTAINER, ItemContainerContents.fromItems(itemStacks));
-                player.setItemInHand(InteractionHand.MAIN_HAND, extracted);
-                syncPlayerInventory(player);
-                return;
-            }
-        }
-
-        if (remainingInShulker.isEmpty()) {
-            for (int i = Math.min(36, player.getInventory().getContainerSize()) - 1; i >= 0; --i) {
-                ItemStack item = player.getInventory().getItem(i);
-
-                if (!canReplaceInventoryItem(item)) {
-                    continue;
-                }
-
-                itemStacks.set(slotInShulker, item.copy());
-                shulker.set(DataComponents.CONTAINER, ItemContainerContents.fromItems(itemStacks));
-
-                player.getInventory().setItem(i, currentMainHand);
-                player.setItemInHand(InteractionHand.MAIN_HAND, extracted);
-                syncPlayerInventory(player);
-                return;
-            }
-        }
+        if (shulker.getCount() != 1 || itemStacks.get(slotInShulker).isEmpty()) return;
+        ShulkerReturnSource source = new ShulkerReturnSource(CarriedShulkerInventory.identify(shulker));
+        CarriedShulkerInventory box = CarriedShulkerInventory.open(shulker);
+        InventoryAccess access = new InventoryAccess(box, () -> {});
+        extractFromContainer(player, source, access, slotInShulker, singleItemMode, shulkerSlot);
     }
 
     private static void handleGetWorldContainerStackPayload(ServerPlayer player, GetWorldContainerStackPayload payload) {
@@ -628,7 +581,7 @@ public class Takeitout implements ModInitializer {
             }
 
             int slot = getSlotWithStack(inventory, requested);
-            if (slot != -1 && extractFromWorldContainer(player, inventory, pos, slot, payload.singleItemMode(), payload.dumps())) {
+            if (slot != -1 && extractFromWorldContainer(player, source, inventory, slot, payload.singleItemMode())) {
                 ServerPlayNetworking.send(player, new WorldContainerStackResponsePayload(requested.copyWithCount(1), true));
                 LOGGER.debug(
                         "GetWorldContainerStack success: player={}, requested={}, pos={}, slot={}, singleItemMode={}",
@@ -654,6 +607,7 @@ public class Takeitout implements ModInitializer {
             int bestShulkerCount = 0;
             Container bestShulkerInventory = null;
             BlockPos bestShulkerPos = null;
+            WorldContainerSource bestShulkerSource = null;
 
             int scanned = 0;
             for (WorldContainerSource source : payload.sources()) {
@@ -681,11 +635,12 @@ public class Takeitout implements ModInitializer {
                         bestShulkerSlot = i;
                         bestShulkerInventory = inventory;
                         bestShulkerPos = pos;
+                        bestShulkerSource = source;
                     }
                 }
             }
 
-            if (bestShulkerSlot != -1 && extractFromWorldContainer(player, bestShulkerInventory, bestShulkerPos, bestShulkerSlot, true, payload.dumps())) {
+            if (bestShulkerSlot != -1 && extractFromWorldContainer(player, bestShulkerSource, bestShulkerInventory, bestShulkerSlot, true)) {
                 ServerPlayNetworking.send(player, new WorldContainerStackResponsePayload(requested.copyWithCount(1), true));
                 LOGGER.debug(
                         "GetWorldContainerStack shulker fallback success: player={}, requested={}, pos={}, slot={}, itemCount={}",
@@ -753,36 +708,10 @@ public class Takeitout implements ModInitializer {
     }
 
     private static void handleDumpInventoryPayload(ServerPlayer player, DumpInventoryPayload payload) {
-        if (payload.dumps() == null || payload.dumps().isEmpty()) {
-            return;
-        }
-
-        for (int i = 0; i < Math.min(36, player.getInventory().getContainerSize()); i++) {
-            ItemStack stack = player.getInventory().getItem(i);
-            if (!canReplaceInventoryItem(stack)) {
-                continue;
-            }
-
-            ItemStack remaining = stack.copy();
-            for (WorldContainerSource dump : payload.dumps()) {
-                if (remaining.isEmpty()) {
-                    break;
-                }
-                Container dumpInventory = getWorldContainerInventory(player, dump);
-                if (dumpInventory == null) {
-                    continue;
-                }
-                remaining = insertIntoContainer(dumpInventory, remaining);
-                syncWorldContainer(player, dumpInventory);
-            }
-
-            if (remaining.getCount() != stack.getCount()) {
-                player.getInventory().setItem(i, remaining.isEmpty() ? ItemStack.EMPTY : remaining);
-            }
-        }
-
+        // Retain the legacy packet, but never use its arbitrary dump targets.
+        int moved = tracker(player).returnAll(player.getInventory(), source -> resolveReturnInventory(player, source));
         syncPlayerInventory(player);
-        LOGGER.debug("DumpInventory: player={}", player.getName().getString());
+        player.sendSystemMessage(Component.translatable("message.takeitout.returned_to_sources", moved));
     }
 
     private static void addItemCount(List<WorldContainerItemCount> items, ItemStack stack) {
@@ -804,266 +733,56 @@ public class Takeitout implements ModInitializer {
     }
 
     private static boolean extractFromWorldContainer(
-            ServerPlayer player,
-            Container inventory,
-            BlockPos pos,
-            int slot,
-            boolean singleItemMode,
-            List<WorldContainerSource> dumps
+            ServerPlayer player, WorldContainerSource source, Container inventory,
+            int slot, boolean singleItemMode
     ) {
-        if (slot < 0 || slot >= inventory.getContainerSize()) {
-            return false;
-        }
-
-        ItemStack stackInContainer = inventory.getItem(slot);
-        if (stackInContainer == null || stackInContainer.isEmpty()) {
-            return false;
-        }
-
-        ItemStack extracted = stackInContainer.copy();
-        if (singleItemMode) {
-            extracted.setCount(1);
-        }
-
-        ItemStack remainingInContainer = stackInContainer.copy();
-        remainingInContainer.shrink(extracted.getCount());
-        ItemStack currentMainHand = player.getItemInHand(InteractionHand.MAIN_HAND).copy();
-
-        if (currentMainHand.isEmpty()) {
-            inventory.setItem(slot, remainingInContainer.isEmpty() ? ItemStack.EMPTY : remainingInContainer);
-            syncWorldContainer(player, inventory);
-            player.setItemInHand(InteractionHand.MAIN_HAND, extracted);
-            syncPlayerInventory(player);
-            return true;
-        }
-
-        if (ItemStack.isSameItemSameComponents(currentMainHand, extracted)
-                && currentMainHand.getCount() < currentMainHand.getMaxStackSize()) {
-            int canAdd = Math.min(currentMainHand.getMaxStackSize() - currentMainHand.getCount(), extracted.getCount());
-            ItemStack actualRemaining = stackInContainer.copy();
-            actualRemaining.shrink(canAdd);
-            inventory.setItem(slot, actualRemaining.isEmpty() ? ItemStack.EMPTY : actualRemaining);
-            syncWorldContainer(player, inventory);
-            currentMainHand.grow(canAdd);
-            player.setItemInHand(InteractionHand.MAIN_HAND, currentMainHand);
-            syncPlayerInventory(player);
-            return true;
-        }
-
-        for (int i = 0; i < Math.min(36, player.getInventory().getContainerSize()); i++) {
-            ItemStack invStack = player.getInventory().getItem(i);
-            if (ItemStack.isSameItemSameComponents(invStack, extracted)
-                    && invStack.getCount() < invStack.getMaxStackSize()) {
-                int canAdd = Math.min(invStack.getMaxStackSize() - invStack.getCount(), extracted.getCount());
-                ItemStack actualRemaining = stackInContainer.copy();
-                actualRemaining.shrink(canAdd);
-                inventory.setItem(slot, actualRemaining.isEmpty() ? ItemStack.EMPTY : actualRemaining);
-                syncWorldContainer(player, inventory);
-                invStack.grow(canAdd);
-                player.getInventory().setItem(i, invStack);
-                syncPlayerInventory(player);
-                return true;
-            }
-        }
-
-        int freeSlot = player.getInventory().getFreeSlot();
-        if (freeSlot != -1) {
-            inventory.setItem(slot, remainingInContainer.isEmpty() ? ItemStack.EMPTY : remainingInContainer);
-            syncWorldContainer(player, inventory);
-            player.getInventory().setItem(freeSlot, currentMainHand);
-            player.setItemInHand(InteractionHand.MAIN_HAND, extracted);
-            syncPlayerInventory(player);
-            return true;
-        }
-
-        inventory.setItem(slot, remainingInContainer.isEmpty() ? ItemStack.EMPTY : remainingInContainer);
-        if (canReplaceInventoryItem(currentMainHand)) {
-            Container insertTarget = null;
-            for (WorldContainerSource dumpSource : dumps) {
-                Container dumpInv = getWorldContainerInventory(player, dumpSource);
-                if (dumpInv != null && canInsertIntoContainer(dumpInv, currentMainHand)) {
-                    insertTarget = dumpInv;
-                    break;
-                }
-            }
-            if (insertTarget == null && canInsertIntoContainer(inventory, currentMainHand)) {
-                insertTarget = inventory;
-            }
-            if (insertTarget != null) {
-                ItemStack leftover = insertIntoContainer(insertTarget, currentMainHand);
-                if (!leftover.isEmpty()) {
-                    inventory.setItem(slot, stackInContainer);
-                    return false;
-                }
-                syncWorldContainer(player, inventory);
-                if (insertTarget != inventory) {
-                    syncWorldContainer(player, insertTarget);
-                }
-                player.setItemInHand(InteractionHand.MAIN_HAND, extracted);
-                syncPlayerInventory(player);
-                return true;
-            }
-        }
-
-        inventory.setItem(slot, stackInContainer);
-
-        if (remainingInContainer.isEmpty()) {
-            for (int i = Math.min(36, player.getInventory().getContainerSize()) - 1; i >= 0; --i) {
-                ItemStack item = player.getInventory().getItem(i);
-                if (!canReplaceInventoryItem(item)) {
-                    continue;
-                }
-
-                for (WorldContainerSource dumpSource : dumps) {
-                    Container dumpInv = getWorldContainerInventory(player, dumpSource);
-                    if (dumpInv != null && canInsertIntoContainer(dumpInv, item)) {
-                        insertIntoContainer(dumpInv, item);
-                        syncWorldContainer(player, dumpInv);
-                        inventory.setItem(slot, ItemStack.EMPTY);
-                        syncWorldContainer(player, inventory);
-                        player.getInventory().setItem(i, currentMainHand);
-                        player.setItemInHand(InteractionHand.MAIN_HAND, extracted);
-                        syncPlayerInventory(player);
-                        return true;
-                    }
-                }
-
-                if (!inventory.canPlaceItem(slot, item)) {
-                    continue;
-                }
-
-                inventory.setItem(slot, item.copy());
-                syncWorldContainer(player, inventory);
-                player.getInventory().setItem(i, currentMainHand);
-                player.setItemInHand(InteractionHand.MAIN_HAND, extracted);
-                syncPlayerInventory(player);
-                return true;
-            }
-        }
-
-        LOGGER.debug(
-                "GetWorldContainerStack aborted: player={}, reason=no_valid_destination, pos={}, slot={}, currentHand={}, extracted={}",
-                player.getName().getString(),
-                pos,
-                slot,
-                currentMainHand,
-                extracted
-        );
-        return false;
+        return extractFromContainer(player, new WorldReturnSource(source),
+                new InventoryAccess(inventory, () -> syncWorldContainer(player, inventory)),
+                slot, singleItemMode, -1);
     }
 
-    private static ItemStack insertIntoShulker(List<ItemStack> itemStacks, ItemStack toInsert) {
-        ItemStack remaining = toInsert.copy();
-
-        for (int i = 0; i < itemStacks.size() && !remaining.isEmpty(); i++) {
-            ItemStack existing = itemStacks.get(i);
-            if (existing.isEmpty()) {
-                continue;
-            }
-
-            if (!ItemStack.isSameItemSameComponents(existing, remaining)) {
-                continue;
-            }
-
-            int max = existing.getMaxStackSize();
-            int canMove = Math.min(max - existing.getCount(), remaining.getCount());
-            if (canMove <= 0) {
-                continue;
-            }
-
-            existing.grow(canMove);
-            remaining.shrink(canMove);
-        }
-
-        for (int i = 0; i < itemStacks.size() && !remaining.isEmpty(); i++) {
-            if (!itemStacks.get(i).isEmpty()) {
-                continue;
-            }
-
-            int move = Math.min(remaining.getCount(), remaining.getMaxStackSize());
-            ItemStack moved = remaining.copy();
-            moved.setCount(move);
-            itemStacks.set(i, moved);
-            remaining.shrink(move);
-        }
-
-        return remaining;
+    /** Both world containers and carried shulkers use this one extraction/return path. */
+    private static boolean extractFromContainer(
+            ServerPlayer player, ReturnSource source, InventoryAccess inventory,
+            int slot, boolean singleItemMode, int sourceShulkerSlot
+    ) {
+        boolean success = tracker(player).take(player.getInventory(), player.getInventory().getSelectedSlot(),
+                source, inventory, slot, singleItemMode, sourceShulkerSlot,
+                target -> resolveReturnInventory(player, target));
+        syncPlayerInventory(player);
+        return success;
     }
 
-    private static boolean canInsertIntoContainer(Container inventory, ItemStack toInsert) {
-        int remaining = toInsert.getCount();
-
-        for (int i = 0; i < inventory.getContainerSize() && remaining > 0; i++) {
-            ItemStack existing = inventory.getItem(i);
-            if (existing == null || existing.isEmpty()) {
-                continue;
-            }
-
-            if (!ItemStack.isSameItemSameComponents(existing, toInsert)) {
-                continue;
-            }
-
-            int max = Math.min(existing.getMaxStackSize(), inventory.getMaxStackSize());
-            remaining -= Math.max(0, max - existing.getCount());
-        }
-
-        for (int i = 0; i < inventory.getContainerSize() && remaining > 0; i++) {
-            ItemStack existing = inventory.getItem(i);
-            if (existing != null && !existing.isEmpty()) {
-                continue;
-            }
-
-            if (!inventory.canPlaceItem(i, toInsert)) {
-                continue;
-            }
-
-            remaining -= Math.min(toInsert.getMaxStackSize(), inventory.getMaxStackSize());
-        }
-
-        return remaining <= 0;
+    private static ContainerReturnTracker<ReturnSource> tracker(ServerPlayer player) {
+        return RETURN_TRACKERS.computeIfAbsent(player.getUUID(), ignored -> new ContainerReturnTracker<>());
     }
 
-    private static ItemStack insertIntoContainer(Container inventory, ItemStack toInsert) {
-        ItemStack remaining = toInsert.copy();
-
-        for (int i = 0; i < inventory.getContainerSize() && !remaining.isEmpty(); i++) {
-            ItemStack existing = inventory.getItem(i);
-            if (existing == null || existing.isEmpty()) {
-                continue;
-            }
-
-            if (!ItemStack.isSameItemSameComponents(existing, remaining)) {
-                continue;
-            }
-
-            int max = Math.min(existing.getMaxStackSize(), inventory.getMaxStackSize());
-            int canMove = Math.min(max - existing.getCount(), remaining.getCount());
-            if (canMove <= 0) {
-                continue;
-            }
-
-            existing.grow(canMove);
-            remaining.shrink(canMove);
+    private static InventoryAccess resolveReturnInventory(ServerPlayer player, ReturnSource source) {
+        if (source instanceof WorldReturnSource worldSource) {
+            ServerLevel world = getSourceWorld(player, worldSource.source());
+            if (world == null || !world.hasChunkAt(BlockPos.of(worldSource.source().position()))) return null;
+            Container inventory = getWorldContainerInventory(player, worldSource.source());
+            return inventory == null ? null
+                    : new InventoryAccess(inventory, () -> syncWorldContainer(player, inventory));
         }
+        CarriedShulkerInventory box = CarriedShulkerInventory.find(player.getInventory(),
+                ((ShulkerReturnSource) source).id());
+        return box == null ? null : new InventoryAccess(box, () -> {});
+    }
 
-        for (int i = 0; i < inventory.getContainerSize() && !remaining.isEmpty(); i++) {
-            ItemStack existing = inventory.getItem(i);
-            if (existing != null && !existing.isEmpty()) {
-                continue;
-            }
-
-            if (!inventory.canPlaceItem(i, remaining)) {
-                continue;
-            }
-
-            int move = Math.min(remaining.getCount(), Math.min(remaining.getMaxStackSize(), inventory.getMaxStackSize()));
-            ItemStack moved = remaining.copy();
-            moved.setCount(move);
-            inventory.setItem(i, moved);
-            remaining.shrink(move);
-        }
-
-        return remaining;
+    /** Flush box contents when a return commits, before the held box can move to another slot. */
+    private record InventoryAccess(Container delegate, Runnable flush) implements Container {
+        @Override public int getContainerSize() { return delegate.getContainerSize(); }
+        @Override public boolean isEmpty() { return delegate.isEmpty(); }
+        @Override public ItemStack getItem(int slot) { return delegate.getItem(slot); }
+        @Override public ItemStack removeItem(int slot, int amount) { return delegate.removeItem(slot, amount); }
+        @Override public ItemStack removeItemNoUpdate(int slot) { return delegate.removeItemNoUpdate(slot); }
+        @Override public void setItem(int slot, ItemStack stack) { delegate.setItem(slot, stack); }
+        @Override public void setChanged() { delegate.setChanged(); flush.run(); }
+        @Override public boolean stillValid(Player player) { return delegate.stillValid(player); }
+        @Override public void clearContent() { delegate.clearContent(); }
+        @Override public int getMaxStackSize() { return delegate.getMaxStackSize(); }
+        @Override public boolean canPlaceItem(int slot, ItemStack stack) { return delegate.canPlaceItem(slot, stack); }
     }
 
     private static int getSlotWithStack(Container inventory, ItemStack stackReference) {
@@ -1292,25 +1011,6 @@ public class Takeitout implements ModInitializer {
         return !item.isEmpty()
                 && item.getItem() instanceof BlockItem blockItem
                 && blockItem.getBlock() instanceof ShulkerBoxBlock;
-    }
-
-    private static boolean canReplaceInventoryItem(ItemStack item) {
-        if (item == null || item.isEmpty()) {
-            return false;
-        }
-
-        if (item.is(ItemTags.HOES)
-                || item.is(ItemTags.AXES)
-                || item.is(ItemTags.SHOVELS)) {
-            return false;
-        }
-
-        if (!(item.getItem() instanceof BlockItem blockItem)) {
-            return false;
-        }
-
-        return !(blockItem.getBlock() instanceof ShulkerBoxBlock)
-                && !(blockItem.getBlock() instanceof EnderChestBlock);
     }
 
     private static void syncPlayerInventory(ServerPlayer player) {

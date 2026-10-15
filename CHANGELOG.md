@@ -1,5 +1,26 @@
 # Changelog
 
+## 1.1.29-26.3-origin-return
+
+- Replaced full-inventory swaps and marked dump containers with a single return-to-source path.
+- Record every successful world-container and carried-shulker take on the server for the current session.
+  The oldest available material is returned to its recorded source when another material needs space.
+  Matching stacks are aggregated across the 36 main inventory slots, including the main hand; ordinary
+  materials receive no per-stack tags. Items with different components remain distinct.
+- Carried source shulkers have a stable identity so moving them between inventory slots cannot redirect
+  returns. Tracked whole shulkers can also return to their world source after their contents change.
+  Nested shulkers and returning a box while extracting its contents are prevented.
+- Unknown items stay in the inventory. Missing, unloaded, disallowed, ambiguous or full sources are
+  skipped; when no complete stack can return, extraction is cancelled and its source restored.
+- The former dump hotkey now returns tracked items to their sources. Removed dump marking, its UI and
+  its storage code. Old dump configuration files are unused and are not deleted.
+- Provenance is session-only and clears on disconnect or server shutdown. The server must run this
+  build; original 26.3 clients retain the same packet format, while updated clients also get the revised
+  return UI. Remote extraction retains the branch's existing chunk-loading behavior;
+  returning to an unloaded world source is skipped.
+- Added 18 inventory regression tests covering origin routing, full inventories, rollback, component
+  matching, carried-box movement, box identity and item conservation.
+
 ## 1.1.18
 
 ### Added

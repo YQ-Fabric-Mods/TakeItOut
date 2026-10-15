@@ -55,22 +55,6 @@ public final class WorldContainerSourceRenderer {
                 poseStack.popPose();
             }
 
-            int dumpColor = 0xFFF97316;
-            for (BlockPos dump : WorldContainerDumps.getDumpSnapshot()) {
-                if (Vec3.atCenterOf(dump).distanceToSqr(cameraPos) > MAX_RENDER_DISTANCE_SQUARED) {
-                    continue;
-                }
-
-                var poseStack = context.poseStack();
-                poseStack.pushPose();
-                poseStack.translate(
-                        dump.getX() - cameraPos.x,
-                        dump.getY() - cameraPos.y,
-                        dump.getZ() - cameraPos.z
-                );
-                collector.submitShapeOutline(poseStack, OUTLINE_SHAPE, RenderTypes.lines(), dumpColor, OUTLINE_ALPHA, false);
-                poseStack.popPose();
-            }
         });
     }
 }
